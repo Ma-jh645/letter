@@ -261,6 +261,7 @@ uv run uvicorn app.main:app --reload
 
 - 隔了三周回来，什么都忘了。建了这份文档，把已完成的部分和剩余路线图都记下来。
 - 确认环境完好：uv 0.12.18、Python 3.13.5、JDK 17.0.18、Node v24.16.0、Git 2.51.0，Android SDK 都在。
+- 把 git 仓库根从 `backend/` 提升到 `letter-app/`，这样这份日志和以后的 `android/` 都在同一个仓库里。提交：`b3663f3`。
 - 下一步：阶段 2，接数据库。
 
 ### 2026-09-23
