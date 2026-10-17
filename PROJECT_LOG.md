@@ -21,13 +21,13 @@
 
 - ✅ 阶段 0：开发环境全部装好并验证过
 - ✅ 阶段 1：后端骨架跑通，`http://127.0.0.1:8000/docs` 能看到 health 接口
+      main.py创建fastapi实例并外挂路由，health.py创建了一个路由，config.py配置属性
 - ✅ 代码已提交 git（1 个提交：「阶段1: FastAPI 骨架 + health 接口」）
-- ⬜ **下一步 → 阶段 2：接 Postgres 数据库**
-- ⬜ Android 端一行代码都还没写
-- ⬜ 每个接口的埋点还没设计
+
 
 **下次开工的第一件事（15 分钟热身，先确认环境还活着）：**
 
+   这是启用python虚拟环境
 ```powershell
 cd D:\daima\letter-app\backend
 uv run uvicorn app.main:app --reload
@@ -36,6 +36,14 @@ uv run uvicorn app.main:app --reload
 浏览器打开 http://127.0.0.1:8000/docs ，看到 `health` 接口就说明一切正常，可以往下做了。
 
 > 如果 `/docs` 白屏：那是 Swagger UI 的界面文件从国外 CDN 加载失败，不影响后端，先访问 http://127.0.0.1:8000/openapi.json 确认真在跑。
+cd D:\daima\letter-app
+git remote add origin https://github.com/Ma-jh645/letter.git
+git branch -M main
+git push -u origin main
+
+**我想把代码提交到GitHub仓库**
+   1.遇到的问题：Git和GitHub没有远程连接，连接完后又发现本机的GitHub用户凭证和我要建立连接的仓库的owner号不一样，申请不到连接
+   2.解决方法：把电脑的GitHub本机凭证换了，不过好像每次git和GitHub连接都得开梯子
 
 ---
 
@@ -48,16 +56,49 @@ uv run uvicorn app.main:app --reload
 **目标：** 让后端能存住东西。现在它一重启就失忆。
 
 1. 注册 [Neon](https://neon.tech) 免费账号，建 Postgres 项目，区域选 Singapore / AWS Asia Pacific
-2. 拿到连接串，填进 `.env` 的 `DATABASE_URL`，**记得把 `postgresql://` 改成 `postgresql+asyncpg://`**
+2. 拿到连接串，填进 `.env` 的 `DATABASE_URL`，**记得把 `postgresql://` 改成 `postgresql+asyncpg://`**（要告诉fastapi我用asyncpg框架）
+-->做到这里postgres数据库和fastapi骨架连通了
 3. 写 `app/db/session.py`：async engine + session 工厂
-4. 初始化 Alembic，把 `env.py` 改成能读 `.env`、能自动发现模型（这是新手最耗时的坑）
-5. 建第一张表，跑通第一次迁移
+   （engine 是连接池，全项目只建一个，别在每个请求里新建。
+   async_sessionmaker 是"会话工厂"，一次请求开一个 AsyncSession。
+   get_db 是个依赖函数，以后路由写 db: AsyncSession = Depends(get_db) 就能拿到会话，async with 保证请求结束自动关）
+-->写 `app/models/base.py & users.py`，填写`app/models/_init_.py`:创建基类表和用户表并导入到_init_里
+4. Alembic 初始化 + 第一次迁移：就是输一堆命令创建出alembic文件，然后在里面配置参数，配置好后执行第一次迁移
+   遇到问题：迁移报错
+   解决：asyncpg驱动和postgres给后端的连接串里有一个关键字参数不一样（在asyncpg里是ssl,在postgres里是sslmodel），改成ssl驱动就能读懂了，就顺利执行迁移了
+
+5. 建第一张表，在postgres里能看见创建的users表
 
 **做完的标志：** `alembic upgrade head` 成功，数据库里能看到你建的表。
 
 ### 阶段 3 · 数据模型 + 核心接口
 
 **目标：** 后端能真正处理「用户」和「信件」。
+1. 装四个包
+  passlib[bcrypt]---密码哈希
+  bcrypt---哈希算法本体
+  pyjwt---签发/校验 JWT
+  email-validator----EmailStr 类型校验邮箱格式，不装会直接导入报错
+
+2. 写backend/app/core/security.py, 写方法（密码转哈希，验证密码，根据用户ID创造通行证，根据通行证解析用户ID）
+   ->要点，这几条是面试也会问的：
+   哈希用 passlib.context.CryptContext(schemes=["bcrypt"], deprecated="auto")，永远 不存明文密码，也永远不能反解。
+   JWT 的 payload 至少放 sub（就是 user.id）和 exp（过期时间）。用 settings.jwt_expire_minutes，.env 里已经有这个值（30 天）。
+   sub 必须是字符串。PyJWT 2.x 会拒绝把 UUID 对象塞进去，str(user.id) 一下就行。
+   exp 用 datetime.now(timezone.utc) + timedelta(minutes=...)，必须带时区。
+   decode 时显式写 algorithms=["HS256"]，不写会报错；密钥用 settings.jwt_secret。
+
+3. 写 backend/app/schemas/user.py，定schema格式规范
+   ->规定用户给服务器传的信息格式，服务器给用户传的信息格式（2进2出）
+
+4. 写 backend/app/api/deps.py，
+   ->取出 Authorization: Bearer xxx 里的 token → decode_access_token 将token中的userid以str格式提取出来 → str形式的userid转化为uuid形式的userid → 去数据库查这 个 user → 查不到或 token 无效就抛 HTTPException(401)
+
+5. 写 backend/app/api/routes/auth.py，
+   ->注册验证：接受用户填写的登陆表单，先去查数据库有没有，有的话报错，没有的话就db.commit,如果提交失败就回滚
+   ->登录验证：接受登录表单，密码不对或者邮箱错误报错，没问题的话就返回token
+   ->read_me: 根据token得到用户id
+   然后将新增的routes加到main里
 
 1. 设计表：用户、信件（内容/图片/收件人/投递时间/状态）
 2. 顺手建**埋点事件表**（见下方「数据方向备注」，这张表越早设计越省事）
